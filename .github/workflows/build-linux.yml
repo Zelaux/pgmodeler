@@ -54,7 +54,7 @@ jobs:
           cmake --build ./cmake-build --target all
           cmake --install ./cmake-build/
 
-      # 4. Секция "Resolving dependencies": копирование Qt, плагинов и ВСЕХ системных библиотек
+      # 4. Секция "Resolving dependencies": копирование Qt, плагинов, системных библиотек и связывание ресурсов
       - name: Bundle All Dependencies
         run: |
           INSTALL_DIR="${{ github.workspace }}/install_dist"
@@ -64,7 +64,14 @@ jobs:
           echo -e "[Paths]\nPrefix=.\nPlugins=lib/qtplugins\nLibraries=lib" > "$INSTALL_DIR/qt.conf"
           echo -e "[Paths]\nPrefix=..\nPlugins=lib/qtplugins\nLibraries=lib" > "$INSTALL_DIR/bin/qt.conf"
 
-          # 4.1. Копируем библиотеки Qt
+          # 4.1. Связывание ресурсов для портативного режима (рядом с бинарником)
+          cd "$INSTALL_DIR/bin"
+          ln -sf ../conf .
+          ln -sf ../schemas .
+          ln -sf ../lang .
+          ln -sf ../samples .
+
+          # 4.2. Копируем библиотеки Qt
           cd "$QT_ROOT/lib"
           cp -P \
             libQt6DBus.so.6* \
@@ -80,7 +87,7 @@ jobs:
             libicudata.so.* \
             "$INSTALL_DIR/lib/"
 
-          # 4.2. Копируем плагины Qt
+          # 4.3. Копируем плагины Qt
           cd "$QT_ROOT/plugins"
           mkdir -p "$INSTALL_DIR/lib/qtplugins/platforms"
 
@@ -92,7 +99,7 @@ jobs:
           cp -r tls/ "$INSTALL_DIR/lib/qtplugins/"
           cp -r xcbglintegrations/ "$INSTALL_DIR/lib/qtplugins/"
 
-          # 4.3. Автоматический рекурсивный сбор ВСЕХ зависимостей (libpq, libxml2, libssl, libcrypto и т.д.)
+          # 4.4. Автоматический рекурсивный сбор ВСЕХ зависимостей (libpq, libxml2, libssl, libcrypto и т.д.)
           EXCLUDE_REGEX="libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|ld-linux|libGL\.so|libGLX\.so|libOpenGL\.so|libEGL\.so|libdrm\.so|libgbm\.so"
 
           echo "=== Поиск и копирование всех зависимостей ==="
@@ -120,10 +127,19 @@ jobs:
             fi
           done
 
-          # 4.4. Создаем скрипт запуска start.sh
+          # 4.5. Создаем скрипт запуска start.sh
           cat << 'EOF' > "$INSTALL_DIR/start.sh"
           #!/usr/bin/env bash
           APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          
+          # Убеждаемся, что симлинки на ресурсы существуют
+          cd "$APP_DIR/bin"
+          [ ! -e conf ] && ln -sf ../conf .
+          [ ! -e schemas ] && ln -sf ../schemas .
+          [ ! -e lang ] && ln -sf ../lang .
+          [ ! -e samples ] && ln -sf ../samples .
+          cd "$APP_DIR"
+
           export LD_LIBRARY_PATH="$APP_DIR/lib:$APP_DIR/lib/pgmodeler:$LD_LIBRARY_PATH"
           export QT_PLUGIN_PATH="$APP_DIR/lib/qtplugins"
           exec "$APP_DIR/bin/pgmodeler" "$@"

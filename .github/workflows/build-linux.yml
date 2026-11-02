@@ -14,7 +14,7 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # 1. Системные зависимости
+      # 1. Системные зависимости для сборки
       - name: Install System Dependencies
         run: |
           sudo apt-get update
@@ -53,8 +53,8 @@ jobs:
           cmake --build ./cmake-build --target all
           cmake --install ./cmake-build/
 
-      # 4. Секция "Resolving dependencies": копирование Qt, плагинов и libpq
-      - name: Bundle Dependencies
+      # 4. Секция "Resolving dependencies": копирование Qt, плагинов и ВСЕХ системных библиотек
+      - name: Bundle All Dependencies
         run: |
           INSTALL_DIR="${{ github.workspace }}/install_dist"
           QT_ROOT=$(qtpaths --install-prefix)
@@ -63,7 +63,7 @@ jobs:
           echo -e "[Paths]\nPrefix=.\nPlugins=lib/qtplugins\nLibraries=lib" > "$INSTALL_DIR/qt.conf"
           echo -e "[Paths]\nPrefix=..\nPlugins=lib/qtplugins\nLibraries=lib" > "$INSTALL_DIR/bin/qt.conf"
 
-          # 4.1. Копируем библиотеки Qt и ICU
+          # 4.1. Копируем библиотеки Qt
           cd "$QT_ROOT/lib"
           cp -P \
             libQt6DBus.so.6* \
@@ -91,20 +91,46 @@ jobs:
           cp -r tls/ "$INSTALL_DIR/lib/qtplugins/"
           cp -r xcbglintegrations/ "$INSTALL_DIR/lib/qtplugins/"
 
-          # 4.3. Копируем libpq.so (клиент PostgreSQL), чтобы работало на системах без PostgreSQL
-          cp -P /usr/lib/*-linux-gnu*/libpq.so* "$INSTALL_DIR/lib/" 2>/dev/null || true
+          # 4.3. Автоматический рекурсивный сбор ВСЕХ зависимостей (libpq, libxml2, libssl, libcrypto и т.д.)
+          # Исключаем только glibc и драйверы GPU (они должны браться из ОС хоста)
+          EXCLUDE_REGEX="libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|ld-linux|libGL\.so|libGLX\.so|libOpenGL\.so|libEGL\.so|libdrm\.so|libgbm\.so"
+
+          echo "=== Поиск и копирование всех зависимостей ==="
+          for i in {1..5}; do
+            FOUND_NEW=0
+            while IFS= read -r file; do
+              while IFS= read -r line; do
+                soname=$(echo "$line" | awk '{print $1}')
+                target=$(echo "$line" | awk '{print $3}')
+
+                if echo "$soname" | grep -Eq "$EXCLUDE_REGEX"; then
+                  continue
+                fi
+
+                if [ -f "$target" ] && [ ! -f "$INSTALL_DIR/lib/$soname" ]; then
+                  cp -L "$target" "$INSTALL_DIR/lib/$soname"
+                  FOUND_NEW=$((FOUND_NEW + 1))
+                fi
+              done < <(ldd "$file" 2>/dev/null | grep '=> /')
+            done < <(find "$INSTALL_DIR/bin" "$INSTALL_DIR/lib" -type f \( -name "*.so*" -o -perm /111 \))
+
+            echo "Проход $i: скопировано $FOUND_NEW новых зависимостей."
+            if [ "$FOUND_NEW" -eq 0 ]; then
+              break
+            fi
+          done
 
           # 4.4. Создаем скрипт запуска start.sh
           cat << 'EOF' > "$INSTALL_DIR/start.sh"
           #!/usr/bin/env bash
           APP_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          export LD_LIBRARY_PATH="$APP_DIR/lib:$LD_LIBRARY_PATH"
+          export LD_LIBRARY_PATH="$APP_DIR/lib:$APP_DIR/lib/pgmodeler:$LD_LIBRARY_PATH"
           export QT_PLUGIN_PATH="$APP_DIR/lib/qtplugins"
           exec "$APP_DIR/bin/pgmodeler" "$@"
           EOF
           chmod +x "$INSTALL_DIR/start.sh"
 
-      # 5. Загрузка собранного архива
+      # 5. Загрузка готового артефакта
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:

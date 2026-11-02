@@ -1,5 +1,5 @@
 name: Build pgModeler (Linux, Windows, macOS)
-
+ 
 on:
   push:
     branches: [ develop, master, main ]

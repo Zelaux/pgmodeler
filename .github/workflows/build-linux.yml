@@ -2,7 +2,7 @@ name: Build pgModeler (Linux)
 
 on:
   push:
-    branches: [ develop, master, main, build]
+    branches: [ develop, master, main ]
   workflow_dispatch:
 
 jobs:
@@ -14,12 +14,14 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # 1. Системные зависимости из документации + OpenGL dev-библиотеки для Ubuntu 24.04
       - name: Install System Dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
             ninja-build \
+            pkg-config \
             libpq-dev \
             libxml2-dev \
             libgl-dev \
@@ -28,27 +30,67 @@ jobs:
             libegl-dev \
             libxkbcommon-dev
 
+      # 2. Установка Qt 6.7.2 (без лишних модулей, qtsvg уже внутри)
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
           version: '6.7.2'
           host: 'linux'
           target: 'desktop'
-          modules: 'qtsvg'
 
-      - name: Configure CMake
+      # 3. Сборка и установка по официальному руководству (с флагом -DPGM_PREFIX)
+      - name: Build and Install pgModeler
         run: |
-          cmake -B build -G Ninja \
+          INSTALL_DIR="${{ github.workspace }}/install_dist"
+          QT_ROOT=$(qtpaths --install-prefix)
+
+          cmake -S . -B ./cmake-build -G Ninja \
+            -DCMAKE_PREFIX_PATH="$QT_ROOT" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install_dist" \
-            -DPREFIX="${{ github.workspace }}/install_dist"
+            -DPGM_PREFIX="$INSTALL_DIR" \
+            --fresh
 
-      - name: Build
-        run: cmake --build build --config Release
+          cmake --build ./cmake-build --target all
+          cmake --install ./cmake-build/
 
-      - name: Install
-        run: cmake --install build --prefix "${{ github.workspace }}/install_dist"
+      # 4. Секция "Resolving dependencies" из документации: копирование runtime Qt и плагинов
+      - name: Bundle Qt Dependencies
+        run: |
+          INSTALL_DIR="${{ github.workspace }}/install_dist"
+          QT_ROOT=$(qtpaths --install-prefix)
 
+          # Создаем qt.conf в корне установки
+          echo -e "[Paths]\nPrefix=.\nPlugins=lib/qtplugins\nLibraries=lib" > "$INSTALL_DIR/qt.conf"
+
+          # Копируем требуемые библиотеки Qt и ICU
+          cd "$QT_ROOT/lib"
+          cp -P \
+            libQt6DBus.so.6* \
+            libQt6PrintSupport.so.6* \
+            libQt6Widgets.so.6* \
+            libQt6Network.so.6* \
+            libQt6Gui.so.6* \
+            libQt6Core.so.6* \
+            libQt6XcbQpa.so.6* \
+            libQt6Svg.so.6* \
+            libicui18n.so.* \
+            libicuuc.so.* \
+            libicudata.so.* \
+            "$INSTALL_DIR/lib/"
+
+          # Копируем плагины Qt
+          cd "$QT_ROOT/plugins"
+          mkdir -p "$INSTALL_DIR/lib/qtplugins/platforms"
+
+          cp -r iconengines/ "$INSTALL_DIR/lib/qtplugins/"
+          cp -r imageformats/ "$INSTALL_DIR/lib/qtplugins/"
+          cp -r platforminputcontexts/ "$INSTALL_DIR/lib/qtplugins/"
+          cp -r platforms/libqxcb.so platforms/libqoffscreen.so "$INSTALL_DIR/lib/qtplugins/platforms/"
+          cp -r printsupport/ "$INSTALL_DIR/lib/qtplugins/"
+          cp -r tls/ "$INSTALL_DIR/lib/qtplugins/"
+          cp -r xcbglintegrations/ "$INSTALL_DIR/lib/qtplugins/"
+
+      # 5. Сохранение готового собранного артефакта
       - name: Upload Linux Artifact
         uses: actions/upload-artifact@v4
         with:

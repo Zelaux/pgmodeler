@@ -2,7 +2,7 @@ name: Build pgModeler (Linux)
 
 on:
   push:
-    branches: [ develop, master, main ]
+    branches: [ develop, master, main, build ]
   workflow_dispatch:
 
 jobs:

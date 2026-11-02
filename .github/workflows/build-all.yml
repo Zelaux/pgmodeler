@@ -1,0 +1,73 @@
+name: Build pgModeler (Linux, Windows, macOS)
+
+on:
+  push:
+    branches: [ develop, master, main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux
+          - os: windows-latest
+            platform: windows
+          - os: macos-latest
+            platform: macos
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.7.2'
+          host: ${{ matrix.platform == 'linux' && 'linux' || matrix.platform == 'windows' && 'windows' || 'mac' }}
+          target: 'desktop'
+          arch: ${{ matrix.platform == 'windows' && 'win64_mingw' || '' }}
+
+      # --- Настройка для Linux ---
+      - name: Install Linux dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libpq-dev libxml2-dev ninja-build
+
+      # --- Настройка для Windows (MinGW) ---
+      - name: Install Windows dependencies
+        if: matrix.platform == 'windows'
+        run: |
+          choco install ninja postgresql16
+          # MinGW поставляется вместе с Qt
+
+      # --- Настройка для macOS ---
+      - name: Install macOS dependencies
+        if: matrix.platform == 'macos'
+        run: |
+          brew install libpq libxml2 ninja
+
+      # --- Сборка CMake ---
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX=install_dist
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Install to prefix
+        run: cmake --install build
+
+      # --- Загрузка готовых артефактов ---
+      - name: Upload Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgmodeler-${{ matrix.platform }}
+          path: install_dist/

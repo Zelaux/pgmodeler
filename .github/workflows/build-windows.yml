@@ -22,7 +22,6 @@ jobs:
         uses: msys2/setup-msys2@v2
         with:
           msystem: MINGW64
-          location: 'C:\msys64'
           update: true
           install: >-
             base-devel
@@ -36,20 +35,75 @@ jobs:
             mingw-w64-x86_64-qt6-svg
             mingw-w64-x86_64-qt6-tools
 
-      # 2. Гарантируем доступность C:\msys64\mingw64 для скриптов pgModeler
-      - name: Ensure Compiler Path
-        run: |
-          mkdir -p /c/msys64
-          if [ ! -d "/c/msys64/mingw64" ]; then
-            cmd.exe //c "mklink /J C:\\msys64\\mingw64 $(cygpath -w /mingw64)" || true
-          fi
-          # Проверяем наличие clang++
-          which clang++
-          /c/msys64/mingw64/bin/clang++ --version
-
-      # 3. Сборка и установка по официальному гайду
+      # 2. Сборка и установка по официальному гайду с явным указанием путей Clang
       - name: Build and Install pgModeler
         run: |
           INSTALL_DIR="$(cygpath -m '${{ github.workspace }}')/install_dist"
+          CLANG_CC="$(cygpath -m /mingw64/bin/clang.exe)"
+          CLANG_CXX="$(cygpath -m /mingw64/bin/clang++.exe)"
 
-          cmake -S . -B ./cmak
+          cmake -S . -B ./cmake-build -G Ninja \
+            -DCMAKE_PREFIX_PATH="/mingw64" \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER="$CLANG_CC" \
+            -DCMAKE_CXX_COMPILER="$CLANG_CXX" \
+            -DPGM_PREFIX="$INSTALL_DIR" \
+            --fresh
+
+          cmake --build ./cmake-build --target all
+          cmake --install ./cmake-build/
+
+      # 3. Деплой зависимостей (windeployqt, DLL и плагины)
+      - name: Bundle Windows Dependencies
+        run: |
+          INSTALL_DIR="$(cygpath -u '${{ github.workspace }}')/install_dist"
+          cd "$INSTALL_DIR"
+
+          # Если бинарники попали в подпапку bin/, дублируем их в корень
+          if [ -d "bin" ]; then
+            cp -r bin/* . 2>/dev/null || true
+          fi
+
+          # 3.1. Запуск windeployqt по документации (для развертывания рантайма Qt)
+          DEPLOY_BIN=$(command -v windeployqt-qt6 || command -v windeployqt)
+          "$DEPLOY_BIN" pgmodeler.exe $(find . -maxdepth 2 -name "*gui*.dll") --compiler-runtime || true
+
+          # 3.2. Создание qt.conf по официальной документации
+          echo -e "[Paths]\nPrefix=.\nPlugins=qtplugins\nLibraries=." > qt.conf
+          if [ -d "bin" ]; then
+            cp qt.conf bin/qt.conf
+          fi
+
+          # 3.3. Копирование обязательных DLL из документации
+          cd /mingw64/bin
+          cp -P \
+            D3Dcompiler_47.dll libb2-1.dll libbrotlicommon.dll libbrotlidec.dll libbz2-1.dll libcrypto-3-x64.dll \
+            libdouble-conversion.dll libfreetype-6.dll libgcc_s_seh-1.dll libglib-2.0-0.dll libgraphite2.dll \
+            libharfbuzz-0.dll libiconv-2.dll libicudt*.dll libicuin*.dll libicuuc*.dll libintl-8.dll liblzma-5.dll \
+            libmd4c.dll libpcre2-8-0.dll libpcre2-16-0.dll libpng16-16.dll libpq.dll libssl-3-x64.dll libstdc++-6.dll \
+            libwinpthread-1.dll libxml2-2.dll libzstd.dll zlib1.dll \
+            "$INSTALL_DIR/" 2>/dev/null || true
+
+          # 3.4. Копирование TLS-плагинов
+          mkdir -p "$INSTALL_DIR/qtplugins/tls"
+          cp -r /mingw64/share/qt6/plugins/tls/* "$INSTALL_DIR/qtplugins/tls/" 2>/dev/null || true
+
+          # 3.5. Автоматический сбор любых других транзитивных DLL
+          echo "=== Поиск и докопирование оставшихся зависимостей ==="
+          for i in {1..3}; do
+            for pe in $(find "$INSTALL_DIR" -maxdepth 2 -type f \( -name "*.exe" -o -name "*.dll" \)); do
+              for dll in $(ldd "$pe" 2>/dev/null | grep -i '/mingw64/bin/' | awk '{print $3}'); do
+                dll_name=$(basename "$dll")
+                if [ ! -f "$INSTALL_DIR/$dll_name" ] && [ -f "$dll" ]; then
+                  cp -L "$dll" "$INSTALL_DIR/"
+                fi
+              done
+            done
+          done
+
+      # 4. Загрузка собранного архива
+      - name: Upload Windows Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgmodeler-windows
+          path: install_dist/

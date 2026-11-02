@@ -30,13 +30,14 @@ jobs:
             libegl-dev \
             libxkbcommon-dev
 
-      # 2. Установка Qt 6.7.2
+      # 2. Установка Qt 6.7.2 со стабильного зеркала
       - name: Install Qt
         uses: jurplel/install-qt-action@v3
         with:
           version: '6.7.2'
           host: 'linux'
           target: 'desktop'
+          mirror: 'https://mirrors.dotsrc.org/qtproject'
 
       # 3. Сборка и установка по официальному руководству
       - name: Build and Install pgModeler
@@ -92,7 +93,6 @@ jobs:
           cp -r xcbglintegrations/ "$INSTALL_DIR/lib/qtplugins/"
 
           # 4.3. Автоматический рекурсивный сбор ВСЕХ зависимостей (libpq, libxml2, libssl, libcrypto и т.д.)
-          # Исключаем только glibc и драйверы GPU (они должны браться из ОС хоста)
           EXCLUDE_REGEX="libc\.so|libm\.so|libdl\.so|libpthread\.so|librt\.so|ld-linux|libGL\.so|libGLX\.so|libOpenGL\.so|libEGL\.so|libdrm\.so|libgbm\.so"
 
           echo "=== Поиск и копирование всех зависимостей ==="

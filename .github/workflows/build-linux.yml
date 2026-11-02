@@ -1,0 +1,56 @@
+name: Build pgModeler (Linux)
+
+on:
+  push:
+    branches: [ develop, master, main, build]
+  workflow_dispatch:
+
+jobs:
+  build-linux:
+    name: Build Linux
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            ninja-build \
+            libpq-dev \
+            libxml2-dev \
+            libgl-dev \
+            libglx-dev \
+            libopengl-dev \
+            libegl-dev \
+            libxkbcommon-dev
+
+      - name: Install Qt
+        uses: jurplel/install-qt-action@v3
+        with:
+          version: '6.7.2'
+          host: 'linux'
+          target: 'desktop'
+          modules: 'qtsvg'
+
+      - name: Configure CMake
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/install_dist" \
+            -DPREFIX="${{ github.workspace }}/install_dist"
+
+      - name: Build
+        run: cmake --build build --config Release
+
+      - name: Install
+        run: cmake --install build --prefix "${{ github.workspace }}/install_dist"
+
+      - name: Upload Linux Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pgmodeler-linux
+          path: install_dist/

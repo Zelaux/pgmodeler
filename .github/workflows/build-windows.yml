@@ -35,46 +35,47 @@ jobs:
             mingw-w64-x86_64-qt6-svg
             mingw-w64-x86_64-qt6-tools
 
-      # 2. Сборка и установка по официальному гайду с явным указанием путей Clang
+      # 2. Связываем жестко зашитый путь C:\msys64\mingw64 с реальным расположением MSYS2
+      - name: Link C:\msys64 to active MinGW64
+        run: |
+          # Удаляем пустую/старую папку mingw64 на диске C
+          cmd.exe //c "rmdir /S /Q C:\\msys64\\mingw64 2>nul" || true
+          cmd.exe //c "mkdir C:\\msys64 2>nul" || true
+          
+          # Создаем Junction на реальный каталог /mingw64 (на диске D)
+          cmd.exe //c "mklink /J C:\\msys64\\mingw64 $(cygpath -w /mingw64)"
+          
+          # Проверяем, что зашитый путь C:/msys64/mingw64/bin/clang++.exe теперь работает
+          /c/msys64/mingw64/bin/clang++.exe --version
+
+      # 3. Сборка и установка по официальному гайду
       - name: Build and Install pgModeler
         run: |
           INSTALL_DIR="$(cygpath -m '${{ github.workspace }}')/install_dist"
-          CLANG_CC="$(cygpath -m /mingw64/bin/clang.exe)"
-          CLANG_CXX="$(cygpath -m /mingw64/bin/clang++.exe)"
 
           cmake -S . -B ./cmake-build -G Ninja \
             -DCMAKE_PREFIX_PATH="/mingw64" \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_C_COMPILER="$CLANG_CC" \
-            -DCMAKE_CXX_COMPILER="$CLANG_CXX" \
             -DPGM_PREFIX="$INSTALL_DIR" \
             --fresh
 
           cmake --build ./cmake-build --target all
           cmake --install ./cmake-build/
 
-      # 3. Деплой зависимостей (windeployqt, DLL и плагины)
+      # 4. Деплой зависимостей (windeployqt, DLL и плагины)
       - name: Bundle Windows Dependencies
         run: |
           INSTALL_DIR="$(cygpath -u '${{ github.workspace }}')/install_dist"
           cd "$INSTALL_DIR"
 
-          # Если бинарники попали в подпапку bin/, дублируем их в корень
-          if [ -d "bin" ]; then
-            cp -r bin/* . 2>/dev/null || true
-          fi
-
-          # 3.1. Запуск windeployqt по документации (для развертывания рантайма Qt)
+          # 4.1. Запуск windeployqt по документации (для развертывания рантайма Qt)
           DEPLOY_BIN=$(command -v windeployqt-qt6 || command -v windeployqt)
           "$DEPLOY_BIN" pgmodeler.exe $(find . -maxdepth 2 -name "*gui*.dll") --compiler-runtime || true
 
-          # 3.2. Создание qt.conf по официальной документации
+          # 4.2. Создание qt.conf по официальной документации
           echo -e "[Paths]\nPrefix=.\nPlugins=qtplugins\nLibraries=." > qt.conf
-          if [ -d "bin" ]; then
-            cp qt.conf bin/qt.conf
-          fi
 
-          # 3.3. Копирование обязательных DLL из документации
+          # 4.3. Копирование обязательных DLL из документации
           cd /mingw64/bin
           cp -P \
             D3Dcompiler_47.dll libb2-1.dll libbrotlicommon.dll libbrotlidec.dll libbz2-1.dll libcrypto-3-x64.dll \
@@ -84,11 +85,11 @@ jobs:
             libwinpthread-1.dll libxml2-2.dll libzstd.dll zlib1.dll \
             "$INSTALL_DIR/" 2>/dev/null || true
 
-          # 3.4. Копирование TLS-плагинов
+          # 4.4. Копирование TLS-плагинов
           mkdir -p "$INSTALL_DIR/qtplugins/tls"
           cp -r /mingw64/share/qt6/plugins/tls/* "$INSTALL_DIR/qtplugins/tls/" 2>/dev/null || true
 
-          # 3.5. Автоматический сбор любых других транзитивных DLL
+          # 4.5. Автоматический сбор любых других транзитивных DLL
           echo "=== Поиск и докопирование оставшихся зависимостей ==="
           for i in {1..3}; do
             for pe in $(find "$INSTALL_DIR" -maxdepth 2 -type f \( -name "*.exe" -o -name "*.dll" \)); do
@@ -101,7 +102,7 @@ jobs:
             done
           done
 
-      # 4. Загрузка собранного архива
+      # 5. Загрузка собранного архива
       - name: Upload Windows Artifact
         uses: actions/upload-artifact@v4
         with:
